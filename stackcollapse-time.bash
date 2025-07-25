@@ -4,7 +4,8 @@ stackcollapse-time() {
 ## Emperically creates a non-linear colorspace mapping (using a screen-space-weighted  CDF) that 
 #      ensure that the colorspace is perceptually uniform and has equal spatial distribution.
 #
-# USAGE:   _timep_PROCESS_FLAMEGRAPH out.folded >out.folded.mod
+# USAGE:   stackcollapse-time out.folded >out.folded.mod
+#          stackcollapse-time <out.folded | flamegraph.pl ( --time | --color=time[p[r]] )
 #
 # OUTPUT:  for each line in out.folded:
 #    a;b;c;d; time [time2] --> a;b;c;d; time:ind [time2:ind2]
@@ -106,7 +107,11 @@ stackcollapse-time() {
     fi
 }
 
-until (( $# == 0 )); do
-    stackcollapse-time "${1}"
-    shift 1
-done
+if (( $! == 0 )) && ! [[ -t 0 ]]; then
+    stackcollapse-time <(cat <&0)
+else
+    until (( $# == 0 )); do
+        stackcollapse-time "${1}"
+        shift 1
+    done
+fi
