@@ -107,9 +107,11 @@ stackcollapse-time() {
     fi
 }
 
-if (( $! == 0 )) && ! [[ -t 0 ]]; then
+if (( $# == 0 )) && ! [[ -t 0 ]]; then
+    # stack traces were passed on stdin
     stackcollapse-time <(cat <&0)
 else
+    # we were passed file(s) with the stack traces
     until (( $# == 0 )); do
         stackcollapse-time "${1}"
         shift 1
