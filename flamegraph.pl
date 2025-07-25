@@ -508,7 +508,7 @@ sub color {
 		$v3 = random_namehash($name);
 	}
 
-        if ($colortime && defined $ind && $ind >= 0 && $n_samples >= 0) {
+        if ($colortime && defined $ind && $ind >= 0 && $n_samples > 0) {
 	    $v1 = 2 * $ind / $n_samples;
         } 
 
