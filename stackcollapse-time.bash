@@ -17,18 +17,22 @@ stackcollapse-time() {
 
     shopt -s extglob
 
-    [[ -f "$1" ]] || {
+    [[ -e "$1" ]] || {
         printf '\nERROR: no file found at "%s"...ABORTING\n\n' "${1}"
         return 1
     }
 
-    local wallTimeN cpuTimeN wallTimeCDF_csum cpuTimeCDF_csum kk kk0 a b c n cpuTimeFlag
+    local wallTimeN cpuTimeN wallTimeCDF_csum cpuTimeCDF_csum kk kk0 a b c n cpuTimeFlag stackOrig
     local -a stackA wallTimeA cpuTimeA wallTimeSortA cpuTimeSortA wallTimeCDF_map0 cpuTimeCDF_map0 wallTimeCDF_map cpuTimeCDF_map
 
+    stackOrig="$(cat "${1}")"
+
      # seperate logs into stack / wall time / cpu time
-    mapfile -t stackA < <(sed -E 's/^(.*)(([[:space:]]+[0-9]+)+)$/\1/' <"${1}") 
-    mapfile -t wallTimeA < <(sed -E 's/^(.*)(([[:space:]]+[0-9]+)+)$/\2 /; s/^[[:space:]]+([0-9]+)[[:space:]]+([0-9]*)[[:space:]]*$/\1/' <"${1}") 
-    mapfile -t cpuTimeA < <(sed -E 's/^(.*)(([[:space:]]+[0-9]+)+)$/\2 /; s/^[[:space:]]+([0-9]+)[[:space:]]+([0-9]*)[[:space:]]*$/\2/' <"${1}" | grep -E '.+') 
+    mapfile -t stackA < <(sed -E 's/^(.*)(([[:space:]]+[0-9]+)+)$/\1/' <<<"${stackOrig}") 
+    mapfile -t wallTimeA < <(sed -E 's/^(.*)(([[:space:]]+[0-9]+)+)$/\2 /; s/^[[:space:]]+([0-9]+)[[:space:]]+([0-9]*)[[:space:]]*$/\1/' <<<"${stackOrig}") 
+    mapfile -t cpuTimeA < <(sed -E 's/^(.*)(([[:space:]]+[0-9]+)+)$/\2 /; s/^[[:space:]]+([0-9]+)[[:space:]]+([0-9]*)[[:space:]]*$/\2/' <<<"${stackOrig}" | grep -E '.+') 
+
+    unset "stackOrig"
 
     if (( ${#cpuTimeA[@]} == 0 )); then
         cpuTimeFlag=false
