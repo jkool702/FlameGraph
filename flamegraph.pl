@@ -823,7 +823,7 @@ foreach (@SortedData) {
 
   	# there may be an extra samples column for differentials / cpu time:
 	
-  	$	delta = undef;
+  	$delta = undef;
 	if (defined $samples2) {
 	    if ($colors =~ /^timep/) {
 	            # we are hijacking the "delta" and "maxdelta" variables. 
