@@ -84,8 +84,9 @@
 #
 # CDDL HEADER END
 #
+# ??-Jul-2025   Anthony Barone  Added support for time-based coloring.
 # 11-Oct-2014	Adrien Mahieux	Added zoom.
-# 21-Nov-2013   Shawn Sterling  Added consistent palette file option
+# 21-Nov-2013   Shawn Sterling  Added consistent palette file option.
 # 17-Mar-2013   Tim Bunce       Added options and more tunables.
 # 15-Dec-2011	Dave Pacheco	Support for frames with whitespace.
 # 10-Sep-2011	Brendan Gregg	Created this.
@@ -120,6 +121,7 @@ my $stackreverse = 0;           # reverse stack order, switching merge end
 my $inverted = 0;               # icicle graph
 my $flamechart = 0;             # produce a flame chart (sort by time, do not merge stacks)
 my $negate = 0;                 # switch differential hues
+my $colortime;					# maps primary (v1) color channel to index defined in the stack traces
 my $titletext = "";             # centered heading
 my $titledefault = "Flame Graph";	# overwritten by --title
 my $titleinverted = "Icicle Graph";	#   "    "
@@ -143,11 +145,12 @@ USAGE: $0 [options] infile > outfile.svg\n
 	--nametype TEXT  # name type label (default "Function:")
 	--colors PALETTE # set color palette. choices are: hot (default), mem,
 	                 # io, wakeup, chain, java, js, perl, red, green, blue,
-	                 # aqua, yellow, purple, orange
+	                 # aqua, yellow, purple, orange, time, timep, timepr
 	--bgcolors COLOR # set background colors. gradient choices are yellow
 	                 # (default), blue, green, grey; flat colors use "#rrggbb"
 	--hash           # colors are keyed by function name hash
 	--random         # colors are randomly generated
+	--time           # colors are determined from sample counts (time spent per-function)
 	--cp             # use consistent palette (palette.map)
 	--reverse        # generate stack-reversed flame graph
 	--inverted       # icicle graph
@@ -185,6 +188,7 @@ GetOptions(
 	'inverted'    => \$inverted,
 	'flamechart'  => \$flamechart,
 	'negate'      => \$negate,
+	'time'	      => \$colortime,
 	'notes=s'     => \$notestext,
 	'help'        => \$help,
 ) or usage();
@@ -195,7 +199,7 @@ my $ypad1 = $fontsize * 3;      # pad top, include title
 my $ypad2 = $fontsize * 2 + 10; # pad bottom, include labels
 my $ypad3 = $fontsize * 2;      # pad top, include subtitle (optional)
 my $xpad = 10;                  # pad lefm and right
-my $framepad = 1;		# vertical padding for frames
+my $framepad = 1;				# vertical padding for frames
 my $depthmax = 0;
 my %Events;
 my %nameattr;
@@ -395,8 +399,100 @@ sub random_namehash {
 	return rand(1)
 }
 
+my $max_wall;
+my $max_cpu;
+my $n_samples;
+
+sub color_timep {
+  my ($type, $name, $count_wall, $ind_wall, $count_cpu, $ind_cpu) = @_;
+  my ($saturation, $intensity, $i2, $s, $type0);
+  my ($r, $g, $b);
+
+    if ($type eq "timep") {
+      	    if (defined $ind_wall && $ind_wall >= 0 && defined $n_samples && $n_samples > 0 ) {
+	    	    $intensity = $ind_wall / (2 * $n_samples);       
+      	    } else {
+	    	    $intensity  = (4 / 3) * (1 - (1 / (1 + ($count_wall / $max_wall) ** 2) ** 2));
+      	    }
+      	    if (defined $count_cpu && $count_cpu > 0) {
+      		    if (defined $ind_cpu && $ind_cpu >= 0 && defined $n_samples && $n_samples > 0 ) {
+      			    $saturation = $ind_cpu / (2 * $n_samples);       
+      		    } else {
+      			    $saturation  = 1 - (1 / (1 + ($count_cpu / $count_wall) ** 2) ** 2);      		    }
+      	    } else {
+      		    $saturation = 1
+      	    }
+      	    $type0 = "time";
+    } elsif (defined $count_cpu && $count_cpu > 0 && $type eq "timepr") {
+     	   if (defined $ind_cpu && $ind_cpu >= 0 && defined $n_samples && $n_samples > 0 ) {
+	   	   $intensity = $ind_cpu / (2 * $n_samples);       
+     	   } else {
+	   	   $intensity  = (4 / 3) * (1 - (1 / (1 + ($count_cpu / $max_cpu) ** 2) ** 2));
+     	   }
+     	   if (defined $count_wall && $count_wall > 0) {
+     		   if (defined $ind_wall && $ind_wall >= 0 && defined $n_samples && $n_samples > 0 ) {
+     			   $saturation = $ind_wall / (2 * $n_samples);       
+     		   } else {
+			   $saturation = 1 - (1 / (1 + $count_wall / $count_cpu) ** 2);
+     		   }
+     	   } else {
+     		   $saturation = 1
+     	   }
+     	   $type0 = "time";
+   } else {
+     	   if (defined $ind_wall && $ind_wall >= 0 && defined $n_samples && $n_samples > 0 ) {
+	   	   $intensity = $ind_wall / (2 * $n_samples);       
+     	   } else {
+	   	   $intensity  = (4 / 3) * (1 - (1 / (1 + ($count_wall / $max_wall) ** 2) ** 2));
+     	   }
+     	   $saturation = 1;  
+     	   $type0 = "time";
+   }
+  
+  $intensity  = 1 if $intensity > 1;
+  $intensity  = 0 if $intensity < 0;
+  $saturation = 1 if $saturation > 1;
+  $saturation = 0 if $saturation < 0;
+
+  $saturation  = (4 / 3) * (1 - (1 / (1 + ($saturation) ** 2) ** 2));
+
+  if ($colors =~ /^timep/) {
+    if ($name =~ m:_\[f\]$:) { 
+      $type0 = "function";
+    } elsif ($name =~ m:_\[s\]$:) {
+      $type0 = "subshell";
+    } else {			
+      $type0 = "time";
+    }
+  }
+
+  if ($type0 eq "time") {
+    $i2 = $intensity ** 2;
+    $r = ((255 * ($intensity + sqrt($intensity)) / 2) * $saturation + 255 * (1 - $saturation));
+    $g = ((255 * (1 - ((1 - 2 * $intensity) ** 2)) * (1 - $i2)) * $saturation + 255 * (1 - $saturation));
+    $b = ((255 * (1 - $intensity) * (1 - $i2) * (1 - ($intensity * $i2))) * $saturation + 255 * (1 - $saturation));
+    $s = $saturation * (1 + 255 / ($r + $g + $b)) / 2;
+    $r = int($r);
+    $g = int($g * $s + 255 * (1 - $s));
+    $b = int($b);
+  } else {
+        $saturation = (1 / 4) + ($saturation / 2);
+  	if ($type0 eq "function") {
+		  $r = ((185 + int(55 * $intensity)) * $saturation + 255 * (1 - $saturation));
+		  $g = ((95 + int(55 * $intensity)) * $saturation + 255 * (1 - $saturation));
+      $b = ((205 + int(50 * $intensity)) * $saturation + 255 * (1 - $saturation));
+  	} elsif ($type0 eq "subshell") {
+		  $r = ((155 + int(55 * $intensity)) * $saturation + 255 * (1 - $saturation));
+		  $g = ((55 + int(55 * $intensity)) * $saturation + 255 * (1 - $saturation));
+		  $b = ((175 + int(55 * $intensity)) * $saturation + 255 * (1 - $saturation));
+  	}
+  }
+
+  return "rgb($r,$g,$b)";
+}
+
 sub color {
-	my ($type, $hash, $name) = @_;
+	my ($type, $hash, $name, $ind) = @_;
 	my ($v1, $v2, $v3);
 
 	if ($hash) {
@@ -411,6 +507,10 @@ sub color {
 		$v2 = random_namehash($name);
 		$v3 = random_namehash($name);
 	}
+
+        if ($colortime && defined $ind && $ind >= 0 && $n_samples > 0) {
+	    $v1 = 2 * $ind / $n_samples;
+        } 
 
 	# theme palettes
 	if (defined $type and $type eq "hot") {
@@ -596,7 +696,7 @@ my %Tmp;
 
 # flow() merges two stacks, storing the merged frames and value data in %Node.
 sub flow {
-	my ($last, $this, $v, $d) = @_;
+	my ($last, $this, $v, $d, $iw, $id) = @_;
 
 	my $len_a = @$last - 1;
 	my $len_b = @$this - 1;
@@ -617,18 +717,36 @@ sub flow {
 		if (defined $Tmp{$k}->{delta}) {
 			$Node{"$k;$v"}->{delta} = delete $Tmp{$k}->{delta};
 		}
+		if (defined $Tmp{$k}->{indwall}) {
+			$Node{"$k;$v"}->{indwall} = delete $Tmp{$k}->{indwall};
+		}
+		if (defined $Tmp{$k}->{inddelta}) {
+			$Node{"$k;$v"}->{inddelta} = delete $Tmp{$k}->{inddelta};
+		}
 		delete $Tmp{$k};
 	}
 
 	for ($i = $len_same; $i <= $len_b; $i++) {
 		my $k = "$this->[$i];$i";
 		$Tmp{$k}->{stime} = $v;
-		if (defined $d) {
-			$Tmp{$k}->{delta} += $i == $len_b ? $d : 0;
-		}
-	}
 
-        return $this;
+      if (defined $d) {
+        if ($colors =~ /^timep/) {
+			# --color=timep[r] will hijack delta and use it as a 2nd independent time / sample count
+          $Tmp{$k}->{delta} = $d;
+		} else {
+           $Tmp{$k}->{delta} += $i == $len_b ? $d : 0;
+		}
+      }
+      if (defined $iw) {
+        $Tmp{$k}->{indwall} = $iw;
+      }
+      if (defined $id) {
+        $Tmp{$k}->{inddelta} = $id;
+      }
+  
+  }
+  return $this;
 }
 
 # parse input
@@ -637,29 +755,39 @@ my @SortedData;
 my $last = [];
 my $time = 0;
 my $delta = undef;
+my $indwall = undef;
+my $inddelta = undef;
 my $ignored = 0;
 my $line;
+my $maxwall = 0;
+my $sumwall = 0;
 my $maxdelta = 1;
+my $sumdelta = 0;
+my $nsamples = 0;
+
+if ($colors =~ /^timep/) {
+    $maxdelta = 0;
+}
 
 # reverse if needed
 foreach (<>) {
 	chomp;
 	$line = $_;
-	if ($stackreverse) {
+    if ($stackreverse) {
 		# there may be an extra samples column for differentials
 		# XXX todo: redo these REs as one. It's repeated below.
-		my($stack, $samples) = (/^(.*)\s+?(\d+(?:\.\d*)?)$/);
+		my($stack, $samples) = (/^(.*)\s+?(\d+(?::?\d+)?(?:\.\d*(?::?\d*)?)?)$/);
 		my $samples2 = undef;
-		if ($stack =~ /^(.*)\s+?(\d+(?:\.\d*)?)$/) {
+		if ($stack =~ /^(.*)\s+?(\d+(?::?\d+)?(?:\.\d*(?::?\d+)?)?)$/) {
 			$samples2 = $samples;
-			($stack, $samples) = $stack =~ (/^(.*)\s+?(\d+(?:\.\d*)?)$/);
+			($stack, $samples) = $stack =~ (/^(.*)\s+?(\d+(?::?\d+)?(?:\.\d*(?::?\d*)?)?)$/);
 			unshift @Data, join(";", reverse split(";", $stack)) . " $samples $samples2";
 		} else {
 			unshift @Data, join(";", reverse split(";", $stack)) . " $samples";
 		}
 	} else {
 		unshift @Data, $line;
-	}
+	}       
 }
 
 if ($flamechart) {
@@ -674,23 +802,41 @@ foreach (@SortedData) {
 	chomp;
 	# process: folded_stack count
 	# eg: func_a;func_b;func_c 31
-	my ($stack, $samples) = (/^(.*)\s+?(\d+(?:\.\d*)?)$/);
-	unless (defined $samples and defined $stack) {
-		++$ignored;
-		next;
-	}
+	my ($stack, $samples);
+  my $samples2 = undef;
 
-	# there may be an extra samples column for differentials:
-	my $samples2 = undef;
-	if ($stack =~ /^(.*)\s+?(\d+(?:\.\d*)?)$/) {
-		$samples2 = $samples;
-		($stack, $samples) = $stack =~ (/^(.*)\s+?(\d+(?:\.\d*)?)$/);
+  ($stack, $samples) = (/^(.*)\s+?(\d+(?::?\d+)?(?:\.\d*(?::?\d*)?)?)$/);
+	  unless (defined $samples and defined $stack) {
+		  ++$ignored;
+		  next;
 	}
-	$delta = undef;
+	if ($stack =~ /^(.*)\s+?(\d+(?::?\d+)?(?:\.\d*(?::?\d*)?)?)$/) {
+		$samples2 = $samples;
+		($stack, $samples) = $stack =~ (/^(.*)\s+?(\d+(?::?\d+)?(?:\.\d*(?::?\d*)?)?)$/);
+  	  	if ($samples2 =~ /^(.*):(.*)$/) {
+   	  		($samples2, $inddelta) = $samples2 =~ (/^(\d+):(\d+)$/); 
+		}
+  	}
+   	if ($samples =~ /^(.*):(.*)$/) {
+       	($samples, $indwall) = $samples =~ (/^(\d+):(\d+)$/); 
+  	}          
+
+  	# there may be an extra samples column for differentials / cpu time:
+	
+  	$delta = undef;
 	if (defined $samples2) {
-		$delta = $samples2 - $samples;
+	    if ($colors =~ /^timep/) {
+	            # we are hijacking the "delta" and "maxdelta" variables. 
+	            # samples is really "wall-clock time". samples2 is really "cpu time".
+              $delta = $samples2;
+		} else {
+		    $delta = $samples2 - $samples;
+    	}
 		$maxdelta = abs($delta) if abs($delta) > $maxdelta;
 	}
+   
+	$maxwall = $samples if $samples > $maxwall;
+	$nsamples += 1;
 
 	# for chain graphs, annotate waker frames with "_[w]", for later
 	# coloring. This is a hack, but has a precedent ("_[k]" from perf).
@@ -708,15 +854,22 @@ foreach (@SortedData) {
 	}
 
 	# merge frames and populate %Node:
-	$last = flow($last, [ '', split ";", $stack ], $time, $delta);
+	$last = flow($last, [ '', split ";", $stack ], $time, $delta, $indwall, $inddelta);
 
-	if (defined $samples2) {
+	if ($colors eq "timep") {
+ 		$time += $samples;
+ 	} elsif (defined $samples2) {
 		$time += $samples2;
 	} else {
 		$time += $samples;
 	}
 }
-flow($last, [], $time, $delta);
+flow($last, [], $time, $delta, $indwall, $inddelta);
+
+if ($colortime) {
+    (defined $indwall) or warn "Coloring by sample count / time requires running the input stack traces through 'stackcollapse-time.bash'. Standard function-name-based coloring ill be used.\n";
+    ($colors !~ /^time/) and (defined $indwall and defined $delta) and warn "Coloring by sample count / time is not supported when using the delta between two input sample counts / times.\nIf the 2nd input is an intependent sample count / time measurement, use '--color=timep' instead.\n"
+}
 
 if ($countname eq "samples") {
 	# If $countname is used, it's likely that we're not measuring in stack samples
@@ -742,6 +895,9 @@ if ($timemax and $timemax < $time) {
 	undef $timemax;
 }
 $timemax ||= $time;
+$max_wall ||= $maxwall;
+$max_cpu ||= $maxdelta;
+$n_samples ||= $nsamples;
 
 my $widthpertime = ($imagewidth - 2 * $xpad) / $timemax;
 
@@ -1218,6 +1374,8 @@ while (my ($id, $node) = each %Node) {
 	my ($func, $depth, $etime) = split ";", $id;
 	my $stime = $node->{stime};
 	my $delta = $node->{delta};
+        my $indwall = $node->{indwall};
+        my $inddelta = $node->{inddelta};
 
 	$etime = $timemax if $func eq "" and $depth == 0;
 
@@ -1239,6 +1397,10 @@ while (my ($id, $node) = each %Node) {
 		=~ s/(^[-+]?\d+?(?=(?>(?:\d{3})+)(?!\d))|\G\d{3}(?=\d))/$1,/g;
 
 	my $info;
+	my $samples2 = undef;
+	my $iwall = undef;
+	my $icpu = undef;
+
 	if ($func eq "" and $depth == 0) {
 		$info = "all ($samples_txt $countname, 100%)";
 	} else {
@@ -1250,7 +1412,17 @@ while (my ($id, $node) = each %Node) {
 		$escaped_func =~ s/>/&gt;/g;
 		$escaped_func =~ s/"/&quot;/g;
 		$escaped_func =~ s/_\[[kwij]\]$//;	# strip any annotation
+
+		if (defined $indwall) {
+			$iwall = sprintf "%.0f", $indwall;
+		}
+		if (defined $inddelta) {
+			$icpu = sprintf "%.0f", $inddelta;
+		}		
 		unless (defined $delta) {
+			$info = "$escaped_func ($samples_txt $countname, $pct%)";
+		} elsif ($colors =~ /^timepr?/) {
+			$samples2 = sprintf "%.0f", ($etime - $delta) * $factor;
 			$info = "$escaped_func ($samples_txt $countname, $pct%)";
 		} else {
 			my $d = $negate ? -$delta : $delta;
@@ -1265,7 +1437,9 @@ while (my ($id, $node) = each %Node) {
 	$im->group_start($nameattr);
 
 	my $color;
-	if ($func eq "--") {
+	if ($colors =~ /^time/) {
+		$color = color_timep($colors, $func, $samples, $iwall, $samples2, $icpu);
+	} elsif ($func eq "--") {
 		$color = $vdgrey;
 	} elsif ($func eq "-") {
 		$color = $dgrey;
@@ -1274,7 +1448,7 @@ while (my ($id, $node) = each %Node) {
 	} elsif ($palette) {
 		$color = color_map($colors, $func);
 	} else {
-		$color = color($colors, $hash, $func);
+		$color = color($colors, $hash, $func, $iwall);
 	}
 	$im->filledRectangle($x1, $y1, $x2, $y2, $color, 'rx="2" ry="2"');
 
